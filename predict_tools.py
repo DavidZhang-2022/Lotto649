@@ -211,12 +211,14 @@ def generate_candidate_sets(
 def monte_carlo(
     df: pd.DataFrame, trials: int = 20_000, top_n: int = 10
 ) -> list[tuple[int, ...]]:
-    """Monte Carlo simulation weighted by historical frequency."""
+    """Improved Monte Carlo: accumulate total score per ticket and rank by accumulated score
+    so tickets that appear often and have high scores are preferred."""
     freq = build_frequency(df)
     numbers = list(NUMBER_RANGE)
     weights = [freq.get(n, 1) for n in numbers]
 
-    seen: dict[tuple[int, ...], int] = {}
+    seen_counts: dict[tuple[int, ...], int] = {}
+    sum_scores: dict[tuple[int, ...], int] = {}
 
     for _ in range(trials):
         pick = set()
@@ -230,10 +232,18 @@ def monte_carlo(
 
         ticket = tuple(main + [bonus])
         score = sum(freq.get(n, 0) for n in ticket)
-        seen[ticket] = max(score, seen.get(ticket, 0))
 
-    best = sorted(seen.items(), key=lambda x: x[1], reverse=True)[:top_n]
-    return [ticket for ticket, _ in best]
+        seen_counts[ticket] = seen_counts.get(ticket, 0) + 1
+        sum_scores[ticket] = sum_scores.get(ticket, 0) + score
+
+    # rank by total accumulated score (occurrence-weighted), tiebreak by occurrence count
+    ranked = sorted(
+        sum_scores.items(),
+        key=lambda kv: (kv[1], seen_counts.get(kv[0], 0)),
+        reverse=True,
+    )[:top_n]
+
+    return [ticket for ticket, _ in ranked]
 
 
 # -------------------------------------------------------------------
