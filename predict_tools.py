@@ -1,6 +1,8 @@
 """
 Lotto 6/49 Analysis Tools
 Basic analysis functions for the historical dataset
+example
+second change to test
 """
 
 from __future__ import annotations
@@ -16,6 +18,9 @@ try:
     HAS_MPL = True
 except ImportError:  # pragma: no cover - optional plotting dependency
     HAS_MPL = False
+
+# disable showing charts by default
+SHOW_PLOTS = False
 
 
 # -------------------------------------------------------------------
@@ -120,7 +125,7 @@ def basic_statistics(df: pd.DataFrame) -> Counter:
 
     # Histogram chart of percentages
     percentages = [freq.get(n, 0) / total_numbers for n in sorted(NUMBER_RANGE)]
-    if HAS_MPL:
+    if HAS_MPL and SHOW_PLOTS:
         x = list(sorted(NUMBER_RANGE))
         y = [p * 100 for p in percentages]
         plt.figure(figsize=(12, 5))
@@ -372,27 +377,27 @@ def analyze_consecutives(df: pd.DataFrame, include_bonus: bool = False) -> None:
             print(f"  {seq}: {cnt:4d} times")
 
     # optional plot: run-length histogram
-    if HAS_MPL and total_runs:
-        lengths = []
-        for length, cnt in runs_counter.items():
-            lengths.extend([length] * cnt)
-        bins = list(range(2, max(lengths) + 2))
-        plt.figure(figsize=(8, 4))
-        counts, bins_out, patches = plt.hist(lengths, bins=bins, align='left', rwidth=0.8)
-        plt.xlabel('Run length')
-        plt.ylabel('Count')
-        plt.title('Distribution of consecutive run lengths')
-        plt.grid(axis='y', linestyle='--', alpha=0.4)
-
-        # annotate each bar with its count
-        for rect, count in zip(patches, counts):
-            height = rect.get_height()
-            if height > 0:
-                plt.text(rect.get_x() + rect.get_width() / 2, height, f"{int(count)}",
-                         ha='center', va='bottom', fontsize=9)
-
-        plt.tight_layout()
-        plt.show()
+    if HAS_MPL and SHOW_PLOTS and total_runs:
+         lengths = []
+         for length, cnt in runs_counter.items():
+             lengths.extend([length] * cnt)
+         bins = list(range(2, max(lengths) + 2))
+         plt.figure(figsize=(8, 4))
+         counts, bins_out, patches = plt.hist(lengths, bins=bins, align='left', rwidth=0.8)
+         plt.xlabel('Run length')
+         plt.ylabel('Count')
+         plt.title('Distribution of consecutive run lengths')
+         plt.grid(axis='y', linestyle='--', alpha=0.4)
+ 
+         # annotate each bar with its count
+         for rect, count in zip(patches, counts):
+             height = rect.get_height()
+             if height > 0:
+                 plt.text(rect.get_x() + rect.get_width() / 2, height, f"{int(count)}",
+                          ha='center', va='bottom', fontsize=9)
+ 
+         plt.tight_layout()
+         plt.show()
 
 
 # -------------------------------------------------------------------
@@ -411,3 +416,112 @@ if __name__ == "__main__":
 
     print("\nMonte Carlo suggestions:")
     print_candidate_sets(monte_carlo(df, trials=5_000), df)
+
+
+def match_numbers(candidate: Iterable[int] | tuple[int, ...], actual: Iterable[int] | tuple[int, ...]) -> dict:
+    """Return match counts between a candidate (main + optional bonus) and an actual draw.
+
+    Returns:
+      {"main_matches": int, "bonus_match": bool, "total_matches": int}
+
+    Both `candidate` and `actual` may be length-6 (no bonus) or length-7 (bonus as last element).
+    """
+    cand = list(candidate)
+    act = list(actual)
+
+    cand_main = set(cand[:NUMBERS_PER_DRAW])
+    cand_bonus = cand[NUMBERS_PER_DRAW] if len(cand) > NUMBERS_PER_DRAW else None
+
+    act_main = set(act[:NUMBERS_PER_DRAW])
+    act_bonus = act[NUMBERS_PER_DRAW] if len(act) > NUMBERS_PER_DRAW else None
+
+    main_matches = len(cand_main & act_main)
+    bonus_match = (cand_bonus is not None and act_bonus is not None and cand_bonus == act_bonus)
+    total_matches = main_matches + (1 if bonus_match else 0)
+
+    return {"main_matches": main_matches, "bonus_match": bonus_match, "total_matches": total_matches}
+
+
+def evaluate_candidates(candidates: Iterable[tuple[int, ...]], actual: Iterable[int] | tuple[int, ...]) -> list[dict]:
+    """Evaluate multiple candidate tickets against an actual draw.
+
+    Returns a list of dicts with keys: "candidate", "main_matches", "bonus_match", "total_matches".
+    """
+    results: list[dict] = []
+    for c in candidates:
+        m = match_numbers(c, actual)
+        results.append({"candidate": tuple(c), **m})
+    return results
+
+
+def update_model_and_regenerate(actual: Iterable[int] | tuple[int, ...], df: pd.DataFrame, persist: bool = False, csv_path: str | Path | None = None, regen_count: int = 10, mc_trials: int = 5_000) -> dict:
+    """Append actual result, rebuild frequencies and return regenerated candidate lists.
+
+    Returns dict with keys: "df", "mc_candidates", "rand_candidates".
+    """
+    df_updated = add_actual_result(actual, df, persist=persist, csv_path=csv_path)
+    mc_candidates = monte_carlo(df_updated, trials=mc_trials, top_n=regen_count)
+    rand_candidates = generate_candidate_sets(df_updated, method="weighted_random", count=regen_count)
+    return {"df": df_updated, "mc_candidates": mc_candidates, "rand_candidates": rand_candidates}
+
+# example usage (moved below function definitions so update_model_and_regenerate exists)
+from pprint import pprint
+
+actual = (13, 22, 24, 28, 29, 46, 16)  # main 6 + bonus
+
+df = load_dataset()  # or use existing df variable
+
+# generate candidates
+mc_candidates = monte_carlo(df, trials=5_000, top_n=10)
+rand_candidates = generate_candidate_sets(df, method="weighted_random", count=10)
+
+# evaluate
+mc_results = evaluate_candidates(mc_candidates, actual)
+rand_results = evaluate_candidates(rand_candidates, actual)
+
+# print all results (sorted by total_matches desc)
+print("Monte Carlo results (sorted):")
+for r in sorted(mc_results, key=lambda x: x["total_matches"], reverse=True):
+    print(r)
+
+print("\nRandom-weighted results (sorted):")
+for r in sorted(rand_results, key=lambda x: x["total_matches"], reverse=True):
+    print(r)
+
+updated = update_model_and_regenerate((13,22,24,28,29,46,16), df, persist=False, regen_count=10)
+print_candidate_sets(updated["mc_candidates"], updated["df"])
+print_candidate_sets(updated["rand_candidates"], updated["df"])
+
+
+def add_actual_result(actual: Iterable[int] | tuple[int, ...], df: pd.DataFrame, date: str | None = None, persist: bool = False, csv_path: str | Path | None = None) -> pd.DataFrame:
+    """Append an actual draw to `df`. `actual` is length-6 or length-7 (bonus last).
+    If persist=True the updated dataframe is written to `csv_path` or the default dataset path.
+    """
+    actual = list(actual)
+    if len(actual) < NUMBERS_PER_DRAW:
+        raise ValueError("actual must contain at least the 6 main numbers")
+    row = {}
+    row["Date"] = date or pd.Timestamp.now().strftime("%Y-%m-%d")
+    for i in range(NUMBERS_PER_DRAW):
+        row[f"Num{i+1}"] = int(actual[i])
+    if len(actual) > NUMBERS_PER_DRAW:
+        row[BONUS_COLUMN] = int(actual[NUMBERS_PER_DRAW])
+    elif BONUS_COLUMN in df.columns:
+        row[BONUS_COLUMN] = pd.NA
+
+    new_df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    if persist:
+        csv_target = Path(csv_path) if csv_path else Path(__file__).resolve().parent.parent / DATASET_NAME
+        new_df.to_csv(csv_target, index=False)
+    return new_df
+
+
+def update_model_and_regenerate(actual: Iterable[int] | tuple[int, ...], df: pd.DataFrame, persist: bool = False, csv_path: str | Path | None = None, regen_count: int = 10, mc_trials: int = 5_000) -> dict:
+    """Append actual result, rebuild frequencies and return regenerated candidate lists.
+
+    Returns dict with keys: "df", "mc_candidates", "rand_candidates".
+    """
+    df_updated = add_actual_result(actual, df, persist=persist, csv_path=csv_path)
+    mc_candidates = monte_carlo(df_updated, trials=mc_trials, top_n=regen_count)
+    rand_candidates = generate_candidate_sets(df_updated, method="weighted_random", count=regen_count)
+    return {"df": df_updated, "mc_candidates": mc_candidates, "rand_candidates": rand_candidates}
